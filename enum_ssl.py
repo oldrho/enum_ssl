@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import socket, ssl
-import OpenSSL
+import cryptography.x509
 import argparse
 import sys
 
@@ -9,7 +9,8 @@ def download(hostname, port, ip=False):
 	if not ip:
 		ip = hostname
 
-	context = ssl.SSLContext()
+	context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+	context.check_hostname = False
 	context.verify_mode = ssl.CERT_NONE
 
 	s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -29,23 +30,21 @@ def download(hostname, port, ip=False):
 
 def get_hostnames(cert):
 	hosts = []
-	x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+	x509 = cryptography.x509.load_pem_x509_certificate(cert.encode('utf-8'))
 
 	# Subject Name
-	subject = x509.get_subject().get_components()
-	for (name,val) in subject:
-		if name == b'CN':
-			hosts += [val.decode('utf-8')]
+	subject = x509.subject.rfc4514_string()
+	if 'CN=' in subject:
+		hosts += [ subject[3:] ]
 
 	# Subject Alternative Names
-	ext_count = x509.get_extension_count()
-	for i in range(0, ext_count):
-		ext = x509.get_extension(i)
-		if b'subjectAltName' == ext.get_short_name():
-			line = str(ext)
-			hosts += line.replace('DNS:', '').replace(',', '').split(' ')
+	for extension in x509.extensions:
+		if extension.oid.dotted_string != '2.5.29.17':
+			continue
+
+		hosts += extension.value.get_values_for_type(cryptography.x509.DNSName)
 	
-	hosts = list(dict.fromkeys(hosts))
+	hosts = list(set(hosts))
 	return hosts
 
 
